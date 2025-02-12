@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { genSalt, hash, compare } from "bcryptjs";
 import { sign } from "hono/jwt";
-
 import { Bindings, Variables } from "../utils";
+import { signinSchema, signupSchema } from "@nayalsaurav/blogapp";
+import { User } from "@prisma/client";
 const router = new Hono<{
   Bindings: Bindings;
   Variables: Variables;
@@ -11,25 +12,27 @@ const router = new Hono<{
 // 📌 User Signup Route
 router.post("/signup", async (c) => {
   const prisma = c.get("prisma");
+  const body = await c.req.json();
+  const parsedBody = signupSchema.safeParse(body);
+  if (!parsedBody.success) {
+    return c.json(
+      {
+        success: false,
+        message: "input validation failed",
+        errors: parsedBody.error.issues.map((err: any) => {
+          return { path: err.path[0], message: err.message };
+        }),
+      },
+      400
+    );
+  }
   try {
-    const { fullName, email, password } = await c.req.json();
-    const existingUser = await prisma.user.findFirst({
-      where: { email },
-    });
-    if (existingUser) {
-      return c.json(
-        { success: false, message: "User with this email already exists" },
-        400
-      );
-    }
-
     const salt = await genSalt(10);
-    const hashedPassword = await hash(password, salt);
-
-    const newUser = await prisma.user.create({
+    const hashedPassword = await hash(body.password, salt);
+    const newUser: User = await prisma.user.create({
       data: {
-        fullName,
-        email,
+        fullName: body.fullName,
+        email: body.email,
         password: hashedPassword,
       },
     });
@@ -37,7 +40,6 @@ router.post("/signup", async (c) => {
       { id: newUser.id, email: newUser.email },
       c.env.JWT_SECRET
     );
-
     return c.json({
       success: true,
       message: "Account Created Successfully",
@@ -51,12 +53,25 @@ router.post("/signup", async (c) => {
 // 📌 User Sign in Route
 router.post("/signin", async (c) => {
   const prisma = c.get("prisma");
-  const { email, password } = await c.req.json();
+  const body = await c.req.json();
+  const parsedBody = signinSchema.safeParse(body);
+  if (!parsedBody.success) {
+    return c.json(
+      {
+        success: false,
+        message: "input validation failed",
+        errors: parsedBody.error.issues.map((err: any) => {
+          return { path: err.path[0], message: err.message };
+        }),
+      },
+      400
+    );
+  }
 
   try {
-    const user = await prisma.user.findFirst({
+    const user: User = await prisma.user.findFirst({
       where: {
-        email,
+        email: body.email,
       },
     });
     if (!user) {
@@ -66,7 +81,7 @@ router.post("/signin", async (c) => {
       );
     }
 
-    const isCorrectPassword = await compare(password, user.password);
+    const isCorrectPassword = await compare(body.password, user.password);
     if (!isCorrectPassword) {
       return c.json(
         { success: false, message: "user has entered incorrect password" },

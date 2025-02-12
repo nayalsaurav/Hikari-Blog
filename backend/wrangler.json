@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "backend",
+  "name": "hikari_backend",
   "main": "src/index.ts",
   "compatibility_date": "2025-02-09",
   "compatibility_flags": ["nodejs_compat"]
