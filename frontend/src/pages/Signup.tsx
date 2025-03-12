@@ -7,8 +7,10 @@ import Button from "../components/Button";
 import QuoteComponent from "../components/QuoteComponent";
 import { signupType } from "@nayalsaurav/blogapp";
 import { baseUrl } from "../utils";
+import { useNavigate } from "react-router";
 
 const Signup = () => {
+  const navigate = useNavigate();
   const [form, setForm] = useState<signupType>({
     fullName: "",
     email: "",
@@ -36,6 +38,7 @@ const Signup = () => {
 
       const response = await promise;
       localStorage.setItem("token", response.data.token);
+      navigate("/blogs");
     } catch (error) {
       console.error("Error signing up:", error);
     }

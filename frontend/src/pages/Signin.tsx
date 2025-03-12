@@ -7,8 +7,10 @@ import { signinType } from "@nayalsaurav/blogapp";
 import axios from "axios";
 import { baseUrl } from "../utils";
 import toast from "react-hot-toast";
+import { useNavigate } from "react-router";
 
 const Signin = () => {
+  const navigate = useNavigate();
   const [form, setForm] = useState<signinType>({
     email: "",
     password: "",
@@ -34,6 +36,7 @@ const Signin = () => {
       });
       const response = await promise;
       localStorage.setItem("token", response.data.token);
+      navigate("/blogs");
     } catch (error) {
       console.error("Error logging in:", error);
     }
