@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import rootRouter from "./routes/index";
 const app = new Hono<{
   Bindings: {
@@ -6,6 +7,7 @@ const app = new Hono<{
     JWT_SECRET: string;
   };
 }>();
+app.use("/*", cors());
 app.get("/", (c) => {
   return c.text("Hello Hono!");
 });

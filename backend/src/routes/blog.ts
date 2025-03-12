@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { authMiddleware } from "../middleware/auth";
-
-import { Blog, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { Bindings, Variables } from "../utils";
 import { blogSchema } from "@nayalsaurav/blogapp";
 
@@ -12,29 +11,37 @@ const router = new Hono<{
 
 // 📌 Create a Blog
 router.post("/", authMiddleware, async (c) => {
+  const prisma = c.get("prisma");
+  const body = await c.req.json();
+  const user = c.get("user");
+
+  // Validate input
+  const parsedBody = blogSchema.safeParse(body);
+  if (!parsedBody.success) {
+    return c.json(
+      {
+        success: false,
+        message: "Input validation failed",
+        errors: parsedBody.error.issues.map((err) => ({
+          path: err.path[0],
+          message: err.message,
+        })),
+      },
+      400
+    );
+  }
+
   try {
-    const prisma = c.get("prisma");
-    const body = await c.req.json();
-    const user = c.get("user");
-    const parsedBody = blogSchema.safeParse(body);
-    if (!parsedBody.success) {
-      return c.json(
-        {
-          success: false,
-          message: "input validation failed",
-          errors: parsedBody.error.issues.map((err: any) => {
-            return { path: err.path[0], message: err.message };
-          }),
-        },
-        400
-      );
-    }
-    const blog: Blog = await prisma.blog.create({
+    const blog = await prisma.blog.create({
       data: {
         title: body.title,
         content: body.content,
         published: body.published ?? false,
         authorId: user.id,
+      },
+      select: {
+        id: true,
+        title: true,
       },
     });
 
@@ -42,92 +49,106 @@ router.post("/", authMiddleware, async (c) => {
       {
         success: true,
         message: "Blog created successfully",
-        blogId: blog.id,
+        blog,
       },
       201
     );
   } catch (error) {
-    throw error;
+    console.error("Error creating blog:", error);
+    return c.json({ success: false, message: "Internal server error" }, 500);
   }
 });
 
-// 📌 Get all Blogs - Todo: add Pagination
+// 📌 Get all Blogs (with Pagination)
 router.get("/bulk", async (c) => {
+  const prisma = c.get("prisma");
+  const page = Number(c.req.query("page")) || 1;
+  const limit = Number(c.req.query("limit")) || 10;
+  const skip = (page - 1) * limit;
+
   try {
-    const prisma = c.get("prisma");
-    const blogs: Blog[] = await prisma.blog.findMany({
+    const blogs = await prisma.blog.findMany({
       where: { published: true },
+      skip,
+      take: limit,
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        createdAt: true,
+        author: {
+          select: {
+            fullName: true,
+          },
+        },
+      },
     });
 
-    if (blogs.length === 0) {
-      return c.json({ success: true, message: "No blogs available" }, 404);
-    }
+    const totalBlogs = await prisma.blog.count({ where: { published: true } });
 
     return c.json(
       {
         success: true,
         message: "All blogs",
-        blogs,
+        data: blogs,
+        pagination: {
+          totalBlogs,
+          currentPage: page,
+          totalPages: Math.ceil(totalBlogs / limit),
+        },
       },
       200
     );
   } catch (error) {
-    throw error;
+    console.error("Error fetching blogs:", error);
+    return c.json({ success: false, message: "Internal server error" }, 500);
   }
 });
 
 // 📌 Get Blog by ID
 router.get("/:id", async (c) => {
-  try {
-    const prisma = c.get("prisma");
-    const blogId = c.req.param("id");
+  const prisma = c.get("prisma");
+  const blogId = c.req.param("id");
 
-    const blog: Blog = await prisma.blog.findFirst({
+  try {
+    const blog = await prisma.blog.findUnique({
       where: { id: blogId },
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        createdAt: true,
+        author: {
+          select: {
+            fullName: true,
+          },
+        },
+      },
     });
 
-    if (!blog || !blog.published) {
-      return c.json(
-        { success: true, message: "No blog found with given ID" },
-        404
-      );
+    if (!blog) {
+      return c.json({ success: false, message: "Blog not found" }, 404);
     }
 
-    return c.json(
-      {
-        success: true,
-        message: "Blog found",
-        blog,
-      },
-      200
-    );
+    return c.json({ success: true, message: "Blog found", data: blog }, 200);
   } catch (error) {
-    throw error;
+    console.error("Error fetching blog:", error);
+    return c.json({ success: false, message: "Internal server error" }, 500);
   }
 });
 
-// 📌 Delete a Blog
+// 📌 Delete a Blog (Only Author)
 router.delete("/:id", authMiddleware, async (c) => {
-  try {
-    const prisma = c.get("prisma");
-    const blogId = c.req.param("id");
-    const user = c.get("user");
+  const prisma = c.get("prisma");
+  const blogId = c.req.param("id");
+  const user = c.get("user");
 
-    const blog: Blog = await prisma.blog.delete({
-      where: {
-        id: blogId,
-        authorId: user.id,
-      },
+  try {
+    await prisma.blog.delete({
+      where: { id: blogId, authorId: user.id },
     });
 
-    return c.json(
-      {
-        success: true,
-        message: "Blog deleted successfully",
-        blog,
-      },
-      200
-    );
+    return c.json({ success: true, message: "Blog deleted" }, 200);
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -138,46 +159,53 @@ router.delete("/:id", authMiddleware, async (c) => {
         404
       );
     }
-    throw error;
+    console.error("Error deleting blog:", error);
+    return c.json({ success: false, message: "Internal server error" }, 500);
   }
 });
 
-// 📌 Update a Blog
+// 📌 Update a Blog (Only Author)
 router.put("/:id", authMiddleware, async (c) => {
+  const prisma = c.get("prisma");
+  const blogId = c.req.param("id");
+  const body = await c.req.json();
+  const user = c.get("user");
+
+  // Validate input
+  const parsedBody = blogSchema.safeParse(body);
+  if (!parsedBody.success) {
+    return c.json(
+      {
+        success: false,
+        message: "Input validation failed",
+        errors: parsedBody.error.issues.map((err) => ({
+          path: err.path[0],
+          message: err.message,
+        })),
+      },
+      400
+    );
+  }
+
   try {
-    const prisma = c.get("prisma");
-    const blogId = c.req.param("id");
-    const body = await c.req.json();
-    const user = c.get("user");
-    const parsedBody = blogSchema.safeParse(body);
-    if (!parsedBody.success) {
-      return c.json(
-        {
-          success: false,
-          message: "input validation failed",
-          errors: parsedBody.error.issues.map((err: any) => {
-            return { path: err.path[0], message: err.message };
-          }),
-        },
-        400
-      );
-    }
-    const updatedBlog: Blog = await prisma.blog.update({
+    const updatedBlog = await prisma.blog.update({
+      where: { id: blogId, authorId: user.id },
       data: {
         title: body.title,
         content: body.content,
         published: body.published ?? false,
       },
-      where: {
-        id: blogId,
-        authorId: user.id,
+      select: {
+        id: true,
+        title: true,
+        content: true,
       },
     });
 
     return c.json({
       success: true,
       message: "Blog updated successfully",
-      blog: updatedBlog,
+      data: updatedBlog,
     });
   } catch (error) {
     if (
@@ -189,7 +217,8 @@ router.put("/:id", authMiddleware, async (c) => {
         404
       );
     }
-    throw error;
+    console.error("Error updating blog:", error);
+    return c.json({ success: false, message: "Internal server error" }, 500);
   }
 });
 
